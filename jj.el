@@ -88,6 +88,19 @@
     (goto-char current-point)))
 
 ;; Commands:
+(transient-define-prefix jj-help ()
+  [["Editing Commands"
+    ("e" "Edit" jj-edit)
+    ("d" "Describe" jj-desc)
+    ("n" "New" jj-new)
+    ("A" "Abandon" jj-abandon)
+    ("s" "Squash" jj-squash)
+    ("r" "Rebase" jj-rebase)]
+   ["Git Commands"
+    ("P" "Push" jj-git-push)
+    ("F" "Fetch" jj-git-fetch)
+    ("B" "Bookmarks" jj--bookmark-transient)]])
+
 (defun jj-edit ()
   (interactive)
   (let ((change-id (jj--change-id-at-point (point))))
@@ -139,57 +152,56 @@
   (interactive)
   (message "TODO: rebase"))
 
-(transient-define-prefix jj--git-transient ()
-  [["Actions"
-    ("p" "Push" jj-git-push)
-    (jj-git-fetch)]
-   ["Exit"
-    ("q" "Quit" transient-quit-one)]])
-
-(defun jj-git-push ()
-  (interactive)
-  (message "TODO: git push"))
-
 (transient-define-prefix jj-git-push ()
-  "jj git push"
-  ["Arguments"
-   ("-R" "Remote (TODO)" "--remote=")
-
-   ("-b" "Bookmark (TODO)" "--bookmark=")
-   ("-a" "Push all bookmarks" "--all=")
-   ("-t" "Push all tracked bookmarks" "--tracked")
-   ("-d" "Push all deleted bookmarks" "--deleted")
-
-   ("-N" "Allow pushing new bookmarks" "--allow-new")
-   ("-e" "Allow pushing commits with empty descriptions" "--allow-empty-description")
-   ("-p" "Allow pushing commits that are private" "--allow-private")
-   ("-r" "Push bookmarks pointing to these commits" "--revisions=")
-   ("-c" "Push this commit by creating a bookmark based on its change ID" "--change=")
-   ("-D" "Only display what will change on the remote" "--dry-run")]
+  [["Options"
+    ("-R" "Remote (TODO)" "--remote=")
+    ("-D" "Only display what will change on the remote" "--dry-run")
+    ("-c" "(TODO) Push this commit by creating a bookmark based on its change ID" "--change=")]
+   ["Bookmarks"
+    ("-b" "Bookmark (TODO)" "--bookmark=")
+    ("-a" "Push all bookmarks" "--all=")
+    ("-t" "Push all tracked bookmarks" "--tracked")
+    ("-d" "Push all deleted bookmarks" "--deleted")
+    ("-N" "Allow pushing new bookmarks" "--allow-new")]
+   ["Commits"
+    ("-e" "Allow pushing commits with empty descriptions" "--allow-empty-description")
+    ("-p" "Allow pushing commits that are private" "--allow-private")
+    ("-r" "(TODO) Push bookmarks pointing to these commits" "--revisions=")]]
   ["Actions"
-   ("p" "Push" jj--do-git-push)
-   ]
-  )
+   ("p" "Push" jj--do-git-push)])
 
 (defun jj--do-git-push (&optional args)
   (interactive
    (list (transient-args 'jj-git-push)))
+  ;; TODO, display reuslt of command in a nicer way
   (message "%s"
-           (shell-command-to-string (format "jj git push %s" (s-join " " args)))))
+           (shell-command-to-string (format "jj git push %s" (s-join " " args))))
+  (revert-buffer)
+  )
 
-(transient-define-suffix jj-git-fetch ()
-  :transient nil
-  :key "F"
-  :description "Fetch"
-  (interactive)
-  (message "%s" (shell-command-to-string "jj git fetch")))
+(transient-define-prefix jj-git-fetch ()
+  ["Options"
+   ;; TODO: list known branches
+   ("-b" "(TODO) Fetch only some of the branches" "--branch=")
+   ;; TODO: list known remotes
+   ("-R" "(TODO) The remote to fetch from" "--remote=")
+   ("-A" "Fetch from all remotes" "--all-remotes")]
+  ["Actions"
+   ("f" "Fetch" jj--do-git-fetch)])
+
+(defun jj--do-git-fetch (&optional args)
+  (interactive
+   (list (transient-args 'jj-git-push)))
+  ;; TODO, display reuslt of command in a nicer way
+  (message "%s"
+           (shell-command-to-string (format "jj git fetch %s" (s-join " " args))))
+  (revert-buffer))
 
 (transient-define-prefix jj--bookmark-transient ()
-  [["Actions"
+  ["jj bookmark"
+   ["Actions"
     ("c" "Create" jj-bookmark-create)]
-   ["Exit" ("q" "Quit" transient-quit-one)]
-   ]
-  )
+   ["Exit" ("q" "Quit" transient-quit-one)]])
 
 (defun jj-bookmark-create (bookmark-name)
   (interactive "MBookmark: ")
@@ -215,6 +227,8 @@
   "," #'jj-test
   "C-i" #'magit-section-toggle
 
+  "?" #'jj-help
+
   "e"  #'jj-edit
   "d"  #'jj-desc
   "n"  #'jj-new
@@ -224,12 +238,12 @@
   "r"  #'jj-rebase
 
   ;; git commands
-  "g" #'jj--git-transient
-  ;; "gp" #'jj-git-push
-  ;; "gf" #'jj-git-fetch
+  ;; "g" #'jj--git-transient
+  "P" #'jj-git-push
+  "F" #'jj-git-fetch
 
   ;; bookmark commands
-  "b" #'jj--bookmark-transient
+  "B" #'jj--bookmark-transient
   ;; "bm" #'jj-bookmark-move
   ;; "bf" #'jj-bookmark-forget
 

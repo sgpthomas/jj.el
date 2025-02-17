@@ -88,19 +88,6 @@
     (goto-char current-point)))
 
 ;; Commands:
-(transient-define-prefix jj-help ()
-  [["Editing Commands"
-    ("e" "Edit" jj-edit)
-    ("d" "Describe" jj-desc)
-    ("n" "New" jj-new)
-    ("A" "Abandon" jj-abandon)
-    ("s" "Squash" jj-squash)
-    ("r" "Rebase" jj-rebase)]
-   ["Git Commands"
-    ("P" "Push" jj-git-push)
-    ("F" "Fetch" jj-git-fetch)
-    ("B" "Bookmarks" jj--bookmark-transient)]])
-
 (defun jj-edit ()
   (interactive)
   (let ((change-id (jj--change-id-at-point (point))))
@@ -132,17 +119,47 @@
       (revert-buffer)
       (jj--goto-change-id change-id))))
 
-(defun jj-abandon ()
+(transient-define-prefix jj-new-with-options ()
+  ["Options"
+   ("-m" "The change description to use" "--message=")
+   ("-n" "Do not edit the newly created change" "--no-edit")
+   ("-A" "Insert the new change after the given commit(s)" "--insert-after=")
+   ("-B" "Insert the new change before the given commit(s)" "--insert-before=")]
+  ["Actions"
+   ("n" "New" jj--do-new)])
+
+(defun jj--do-new (&optional args)
+  (interactive
+   (list (transient-args 'jj-new-with-options)))
+  (shell-command-to-string (format "jj new %s" (s-join " " args)))
+  (revert-buffer))
+
+(defun jj-new-after ()
   (interactive)
   (let ((change-id (jj--change-id-at-point (point))))
     (when change-id
-      (message "%s"
-               (shell-command-to-string (format "jj abandon %s" change-id)))
-      (revert-buffer))))
+      (shell-command-to-string (format "jj new -A %s" change-id))
+      (revert-buffer)
+      (jj--goto-change-id change-id))))
 
-(defun jj-new-merge ()
+(defun jj-new-before ()
   (interactive)
-  (message "TODO: new merge"))
+  (let ((change-id (jj--change-id-at-point (point))))
+    (when change-id
+      (shell-command-to-string (format "jj new -B %s" change-id))
+      (revert-buffer)
+      (jj--goto-change-id change-id))))
+
+(transient-define-prefix jj-abandon ()
+  ["Actions"
+   ("RET" "Abandon change at point" jj--do-abandon)])
+
+(defun jj--do-abandon ()
+  (interactive)
+  (let ((change-id (jj--change-id-at-point (point))))
+    (when change-id
+      (shell-command-to-string (format "jj abandon %s" change-id))
+      (revert-buffer))))
 
 (defun jj-squash ()
   (interactive)
@@ -151,6 +168,22 @@
 (defun jj-rebase ()
   (interactive)
   (message "TODO: rebase"))
+
+(defun jj-diff ()
+  (interactive)
+  (let ((change-id (jj--change-id-at-point (point))))
+    (when change-id
+      (let ((diff-buffer (get-buffer-create (format "jj-diff-%s" change-id))))
+        (switch-to-buffer-other-window diff-buffer)
+
+        (font-lock-mode 1)
+        (special-mode)
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (insert (ansi-color-apply
+                   (shell-command-to-string (format "jj diff -r %s --color=always" change-id)))))
+        
+        (goto-char (point-min))))))
 
 (transient-define-prefix jj-git-push ()
   [["Options"
@@ -176,8 +209,7 @@
   ;; TODO, display reuslt of command in a nicer way
   (message "%s"
            (shell-command-to-string (format "jj git push %s" (s-join " " args))))
-  (revert-buffer)
-  )
+  (revert-buffer))
 
 (transient-define-prefix jj-git-fetch ()
   ["Options"
@@ -191,7 +223,7 @@
 
 (defun jj--do-git-fetch (&optional args)
   (interactive
-   (list (transient-args 'jj-git-push)))
+   (list (transient-args 'jj-git-fetch)))
   ;; TODO, display reuslt of command in a nicer way
   (message "%s"
            (shell-command-to-string (format "jj git fetch %s" (s-join " " args))))
@@ -222,6 +254,23 @@
   (interactive)
   (message "%s" (jj--change-id-at-point (point))))
 
+(transient-define-prefix jj-help ()
+  [["Editing Commands"
+    ("e" "Edit" jj-edit)
+    ("d" "Describe" jj-desc)
+    ("n" "New" jj-new)
+    ("N" "New with options" jj-new-with-options)
+    ("A" "New after" jj-new-after)
+    ("B" "New before" jj-new-before)
+    ("x" "Abandon" jj-abandon)
+    ("s" "Squash" jj-squash)
+    ("r" "Rebase" jj-rebase)
+    ("D" "Diff" jj-diff)]
+   ["Git Commands"
+    ("P" "Push" jj-git-push)
+    ("F" "Fetch" jj-git-fetch)
+    ("B" "Bookmarks" jj--bookmark-transient)]])
+
 (defvar-keymap jj-log-mode-map
   :parent special-mode-map
   "," #'jj-test
@@ -232,22 +281,19 @@
   "e"  #'jj-edit
   "d"  #'jj-desc
   "n"  #'jj-new
-  "A"  #'jj-abandon
-  "N"  #'jj-new-merge
+  "N"  #'jj-new-with-options
+  "A"  #'jj-new-after
+  "B"  #'jj-new-before
+
+  "x"  #'jj-abandon
   "s"  #'jj-squash
   "r"  #'jj-rebase
+  "D"  #'jj-diff
 
   ;; git commands
-  ;; "g" #'jj--git-transient
   "P" #'jj-git-push
   "F" #'jj-git-fetch
-
-  ;; bookmark commands
-  "B" #'jj--bookmark-transient
-  ;; "bm" #'jj-bookmark-move
-  ;; "bf" #'jj-bookmark-forget
-
-  )
+  "b" #'jj--bookmark-transient)
 
 (define-derived-mode jj-log-mode special-mode "jj status"
   "Major mode for the jj status buffer."
@@ -313,6 +359,13 @@
   (insert (substitute-command-keys
            "JJ: Press `\\[jj-describe-confirm]' to confirm, `\\[jj-describe-abort]' to abort\n"))
   (goto-line 1))
+
+;;;###autoload
+(defun jj-diff-editor (left right output)
+  (message "%s %s %s" left right output)
+  (ediff-directories3 left right output nil)
+  (error "nyi")
+  )
 
 ;;; Code:
 (provide 'jj)

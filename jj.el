@@ -31,6 +31,10 @@
   '()
   "Alist mapping change ids to commit ids")
 
+(defvar jj--marked-changes
+  '()
+  "A list of `marked' changed-ids")
+
 (defun jj--update-data ()
   "Get list of change ids and commit ids from `jj'"
 
@@ -44,7 +48,7 @@
            jj--change-data))
 
 (defun jj--change-id-at-point (point)
-  "Gets the `change_id' of under the given `point'"
+  "Gets the `change_id' over the line `point' is in"
 
   (save-excursion
     (goto-char point)
@@ -81,11 +85,53 @@
       (magit-insert-section (magit-section)
         (magit-insert-heading "Log")
         (magit-insert-section-body
-          (insert (propertize (ansi-color-apply (shell-command-to-string jj--user-log))
-                              'jj-log t))
+          (let ((before (point)))
+            (insert (propertize (ansi-color-apply (shell-command-to-string jj--user-log))
+                                'jj-log t))
+            ;; go through and highlight all change-ids that are marked
+            ;; TODO: not sure if this is where I want this to happen
+            (goto-char before)
+            (while (< (point) (point-max))
+              (when (-contains? jj--marked-changes (word-at-point))
+                (overlay-put (make-overlay (point) (- (point) (length (word-at-point))))
+                             'face 'match))
+              (forward-word)))
           (insert "\n"))))
 
     (goto-char current-point)))
+
+(defun jj--debug-overlays ()
+  (interactive)
+  (let ((change-id (jj--change-id-at-point (point))))
+    (goto-char (line-beginning-position))
+    (setq-local jj--debug-word-at-point 'nil)
+    (while (and (not jj--debug-word-at-point)
+                (not (s-equals? jj--debug-word-at-point change-id))
+                (< (point) (line-end-position)))
+      (message "%s" jj--debug-word-at-point)
+      (forward-to-word)
+      (setq-local jj--debug-word-at-point (word-at-point))
+      (let ((overlay (make-overlay (point) (+ (point) (length change-id)))))
+        (overlay-put overlay 'face 'match)
+        )
+      )
+    ))
+
+(defun jj--debug-mark-all ()
+  (interactive)
+  (while (< (point) (point-max))
+    (forward-word)
+    (when (-contains? jj--marked-changes (word-at-point))
+      (let ((overlay (make-overlay (point) (- (point) (length (word-at-point))))))
+        (overlay-put overlay 'face 'match)
+        )
+      )
+    ))
+
+(defun jj--debug-remove-overlays (loc)
+  (interactive "d")
+  (--map (delete-overlay it) (overlays-at loc))
+  )
 
 ;; Commands:
 (defun jj-edit ()
@@ -165,9 +211,35 @@
   (interactive)
   (message "TODO: squash"))
 
-(defun jj-rebase ()
+(transient-define-prefix jj-rebase ()
+  ["--from"
+   ("r" "Revision" jj--rebase-revision)
+   ("s" "Source" jj--rebase-source)])
+
+(defun jj--rebase-revision ()
   (interactive)
-  (message "TODO: rebase"))
+
+  (let ((change-id (jj--change-id-at-point (point))))
+    (when (and change-id jj--marked-changes)
+      (message "%s" (shell-command-to-string
+       (format "jj rebase -r %s %s"
+               change-id
+               (s-join " " (--map (format "-d %s" it)
+                                  jj--marked-changes)))))
+      (setq jj--marked-changes 'nil)
+      (revert-buffer))))
+
+(defun jj--rebase-source ()
+  (interactive)
+
+  (let ((change-id (jj--change-id-at-point (point))))
+    (when (and change-id jj--marked-changes)
+      (shell-command-to-string
+       (format "jj rebase -s %s %s"
+               change-id
+               (s-join " " (--map (format "-d %s" it)
+                                  jj--marked-changes))))
+      (setq jj--marked-changes 'nil))))
 
 (defun jj-diff ()
   (interactive)
@@ -184,6 +256,23 @@
                    (shell-command-to-string (format "jj diff -r %s --color=always" change-id)))))
         
         (goto-char (point-min))))))
+
+(defun jj--mark ()
+  (interactive)
+
+  (let ((change-id (jj--change-id-at-point (point))))
+    (when change-id
+      (add-to-list 'jj--marked-changes change-id))
+    
+    (revert-buffer)))
+
+(defun jj--unmark ()
+  (interactive)
+
+  (let ((change-id (jj--change-id-at-point (point))))
+    (setq-local jj--marked-changes
+                (remove change-id jj--marked-changes))
+    (revert-buffer)))
 
 (transient-define-prefix jj-git-push ()
   [["Options"
@@ -289,6 +378,9 @@
   "s"  #'jj-squash
   "r"  #'jj-rebase
   "D"  #'jj-diff
+
+  "m"  #'jj--mark
+  "u"  #'jj--unmark
 
   ;; git commands
   "P" #'jj-git-push

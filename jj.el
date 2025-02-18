@@ -157,44 +157,67 @@
                        (with-current-buffer (get-buffer "*jj*")
                          (revert-buffer)))))))))
 
-(defun jj-new ()
-  (interactive)
-  (let ((change-id (jj--change-id-at-point (point))))
-    (when change-id
-      (shell-command-to-string (format "jj new %s" change-id))
-      (revert-buffer)
-      (jj--goto-change-id change-id))))
+;; (defun jj-new ()
+;;   (interactive)
+;;   (if jj--marked-changes
+;;       (progn
+;;         (shell-command-to-string (format "jj new %s" (s-join " " jj--marked-changes)))
+;;         (setq jj--marked-changes 'nil)
+;;         (revert-buffer))
+;;     ;; else
+;;     (let ((change-id (jj--change-id-at-point (point))))
+;;       (when change-id
+;;         (shell-command-to-string (format "jj new %s" change-id))
+;;         (revert-buffer)
+;;         (jj--goto-change-id change-id)))))
 
 (transient-define-prefix jj-new-with-options ()
   ["Options"
    ("-m" "The change description to use" "--message=")
-   ("-n" "Do not edit the newly created change" "--no-edit")
-   ("-A" "Insert the new change after the given commit(s)" "--insert-after=")
-   ("-B" "Insert the new change before the given commit(s)" "--insert-before=")]
+   ("-n" "Do not edit the newly created change" "--no-edit")]
   ["Actions"
-   ("n" "New" jj--do-new)])
+   ("n" "New" jj--do-new)
+   ("A" "After" jj-new-after)
+   ("B" "Before" jj-new-before)])
 
 (defun jj--do-new (&optional args)
   (interactive
    (list (transient-args 'jj-new-with-options)))
-  (shell-command-to-string (format "jj new %s" (s-join " " args)))
-  (revert-buffer))
 
-(defun jj-new-after ()
-  (interactive)
+  (if jj--marked-changes
+      (progn
+        (shell-command-to-string (format "jj new %s %s"
+                                         (s-join " " jj--marked-changes)
+                                         (s-join " " args)))
+        (setq jj--marked-changes 'nil)
+        (revert-buffer))
+    ;; else
+    (let ((change-id (jj--change-id-at-point (point))))
+      (when change-id
+        (shell-command-to-string (format "jj new %s %s"
+                                         change-id
+                                         (s-join " " args)))
+        (revert-buffer)))))
+
+(defun jj-new-after (&optional args)
+  (interactive
+   (list (transient-args 'jj-new-with-options)))
   (let ((change-id (jj--change-id-at-point (point))))
     (when change-id
-      (shell-command-to-string (format "jj new -A %s" change-id))
-      (revert-buffer)
-      (jj--goto-change-id change-id))))
+      (shell-command-to-string (format "jj new -A %s %s"
+                                       change-id
+                                       (s-join " " args)))
+      (revert-buffer))))
 
-(defun jj-new-before ()
-  (interactive)
+(defun jj-new-before (&optional args)
+  (interactive
+   (list (transient-args 'jj-new-with-options)))
   (let ((change-id (jj--change-id-at-point (point))))
     (when change-id
-      (shell-command-to-string (format "jj new -B %s" change-id))
-      (revert-buffer)
-      (jj--goto-change-id change-id))))
+      (shell-command-to-string (format "jj new -B %s"
+                                       change-id
+                                       (s-join " " args)))
+      (revert-buffer))))
 
 (transient-define-prefix jj-abandon ()
   ["Actions"
@@ -347,10 +370,7 @@
   [["Editing Commands"
     ("e" "Edit" jj-edit)
     ("d" "Describe" jj-desc)
-    ("n" "New" jj-new)
-    ("N" "New with options" jj-new-with-options)
-    ("A" "New after" jj-new-after)
-    ("B" "New before" jj-new-before)
+    ("n" "New" jj-new-with-options)
     ("x" "Abandon" jj-abandon)
     ("s" "Squash" jj-squash)
     ("r" "Rebase" jj-rebase)
@@ -369,10 +389,7 @@
 
   "e"  #'jj-edit
   "d"  #'jj-desc
-  "n"  #'jj-new
-  "N"  #'jj-new-with-options
-  "A"  #'jj-new-after
-  "B"  #'jj-new-before
+  "n"  #'jj-new-with-options
 
   "x"  #'jj-abandon
   "s"  #'jj-squash

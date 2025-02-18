@@ -343,9 +343,11 @@
 
 (transient-define-prefix jj--bookmark-transient ()
   ["jj bookmark"
-   ["Actions"
+   ["Create"
     ("c" "Create" jj-bookmark-create)]
-   ["Exit" ("q" "Quit" transient-quit-one)]])
+   ["Move"
+    ("-B" "Allow moving bookmarks backwards or sideways" "--allow-backwards")
+    ("m" "Move" jj-bookmark-move)]])
 
 (defun jj-bookmark-create (bookmark-name)
   (interactive "MBookmark: ")
@@ -354,9 +356,28 @@
       (shell-command-to-string (format "jj bookmark create -r %s %s" change-id bookmark-name))
       (revert-buffer))))
 
-(defun jj-bookmark-move ()
-  (interactive)
-  (message "TODO: bookmark move"))
+(defun jj-bookmark-move (&optional args)
+  (interactive
+   (list (transient-args 'jj--bookmark-transient)))
+  (let ((change-id (jj--change-id-at-point (point))))
+    (if (equal (length jj--marked-changes) 1)
+        (progn
+          (shell-command-to-string
+           (format "jj bookmark move --from %s --to %s %s"
+                   (car jj--marked-changes)
+                   change-id
+                   (s-join " " args)))
+          (setq jj--marked-changes 'nil)
+          (revert-buffer))
+      ;; else
+      (when change-id
+        (let ((bookmark-name (read-string "Bookmark: ")))
+          (shell-command-to-string
+           (format "jj bookmark move --from %s --to %s %s"
+                   bookmark-name
+                   change-id
+                   (s-join " " args)))
+          (revert-buffer))))))
 
 (defun jj-bookmark-forget ()
   (interactive)
@@ -402,7 +423,7 @@
   ;; git commands
   "P" #'jj-git-push
   "F" #'jj-git-fetch
-  "b" #'jj--bookmark-transient)
+  "B" #'jj--bookmark-transient)
 
 (define-derived-mode jj-log-mode special-mode "jj status"
   "Major mode for the jj status buffer."

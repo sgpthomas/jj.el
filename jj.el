@@ -3,7 +3,7 @@
 ;; Copyright (C) 2023 Samuel Thomas
 
 ;; Author: Samuel Thomas <sgt@cs.utexas.edu>
-;; Package-Requires: (dash magit-section s transient )
+;; Package-Requires: (dash magit-section s transient)
 
 ;;; External packages:
 (require 'dash)
@@ -494,8 +494,87 @@
 (defun jj-diff-editor (left right output)
   (message "%s %s %s" left right output)
   (ediff-directories3 left right output nil)
-  (error "nyi")
+  (error "nyi"))
+
+(define-minor-mode jj-diff-hl-mode
+  "Toggles the highlight jj diffs in buffer."
+  nil
+  :global nil
+  :group 'jj
+
+  (if jj-diff-hl-mode
+      (progn
+        (jj--find-conflicts)
+        (jj--highlight-conflicts)
+        (jj--highlight-changes))
+    (progn
+      ;; TODO: use jj--conflicts to make this more efficient
+      (save-excursion
+        (goto-char (point-min))
+        (while (not (eobp))
+          (--map (when (overlay-get it 'jj-diff-hl)
+                   (delete-overlay it))
+                 (overlays-at (point)))
+          (forward-line 1))))))
+
+(defvar-local jj--conflicts '())
+
+(defun jj--find-conflicts ()
+  (let ((start-conflict-rx
+         (rx (: "<<<<<<<" (1+ any) (1+ digit)
+                space "of" space (1+ digit))))
+        (end-conflict-rx
+         (rx (: ">>>>>>" (1+ any) (1+ digit)
+                space "of" space (1+ digit) space "ends"))))
+
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward start-conflict-rx (point-max) t)
+        (beginning-of-line)
+        (let ((start (point)))
+          (re-search-forward end-conflict-rx)
+          (end-of-line)
+          (let ((end (point)))
+            (add-to-list 'jj--conflicts `(,start . ,(1+ end)))))))))
+
+(defun jj--highlight-conflicts ()
+  (--map (jj--make-overlay (car it) (cdr it) 'diff-index)
+         jj--conflicts))
+
+(defun jj--highlight-changes ()
+  (--map (save-excursion
+           (goto-char (car it))
+           (when (re-search-forward (rx (: "%%%%%%%" (1+ any) "Changes"))
+                                    (cdr it)
+                                    t)
+             (end-of-line)
+             (let ((start (1+ (point))))
+               (next-line)
+               (re-search-forward (rx (| "+++++++" ">>>>>>>" "%%%%%%%"))  (cdr it))
+               (beginning-of-line)
+               (let ((end (point)))
+                 (goto-char start)
+                 (while (< (point) end)
+                   (beginning-of-line)
+                   (when (s-starts-with? "+" (thing-at-point 'line))
+                     (jj--make-overlay (line-beginning-position)
+                                       (line-end-position)
+                                       'diff-added))
+                   (when (s-starts-with? "-" (thing-at-point 'line))
+                     (jj--make-overlay (line-beginning-position)
+                                       (line-end-position)
+                                       'diff-removed))
+                   (next-line))
+                 (jj--make-overlay start end 'diff-context)))))
+         jj--conflicts))
+
+(defun jj--highlight-contents ()
   )
+
+(defun jj--make-overlay (start end face)
+  (let ((overlay (make-overlay start end)))
+    (overlay-put overlay 'jj-diff-hl t)
+    (overlay-put overlay 'face face)))
 
 ;;; Code:
 (provide 'jj)

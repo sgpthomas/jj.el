@@ -66,6 +66,16 @@
                       change-id)))
     (next-line)))
 
+(defun jj--goto-current-change ()
+  (interactive)
+  (let ((change-id (save-excursion
+                     (goto-char (point-min))
+                     (search-forward-regexp
+                      (rx (: "Working copy" (0+ whitespace) ":" (0+ whitespace)
+                             (group (= 8 alnum)))))
+                     (match-string-no-properties 1))))
+    (jj--goto-change-id change-id)))
+
 (defun jj--render ()
   ;; testing
   ;; (setq-local default-directory "~/Development/yardbird")
@@ -155,7 +165,8 @@
          :sentinel (lambda (_process event)
                       (when (s-equals? event "finished\n")
                        (with-current-buffer (get-buffer "*jj*")
-                         (revert-buffer)))))))))
+                         (revert-buffer)
+                         (jj--goto-current-change)))))))))
 
 ;; (defun jj-new ()
 ;;   (interactive)
@@ -190,14 +201,16 @@
                                          (s-join " " jj--marked-changes)
                                          (s-join " " args)))
         (setq jj--marked-changes 'nil)
-        (revert-buffer))
+        (revert-buffer)
+        (jj--goto-current-change))
     ;; else
     (let ((change-id (jj--change-id-at-point (point))))
       (when change-id
         (shell-command-to-string (format "jj new %s %s"
                                          change-id
                                          (s-join " " args)))
-        (revert-buffer)))))
+        (revert-buffer)
+        (jj--goto-current-change)))))
 
 (defun jj-new-after (&optional args)
   (interactive
@@ -207,7 +220,8 @@
       (shell-command-to-string (format "jj new -A %s %s"
                                        change-id
                                        (s-join " " args)))
-      (revert-buffer))))
+      (revert-buffer)
+      (jj--goto-current-change))))
 
 (defun jj-new-before (&optional args)
   (interactive
@@ -217,7 +231,8 @@
       (shell-command-to-string (format "jj new -B %s"
                                        change-id
                                        (s-join " " args)))
-      (revert-buffer))))
+      (revert-buffer)
+      (jj--goto-current-change))))
 
 (transient-define-prefix jj-abandon ()
   ["Actions"
@@ -228,7 +243,8 @@
   (let ((change-id (jj--change-id-at-point (point))))
     (when change-id
       (shell-command-to-string (format "jj abandon %s" change-id))
-      (revert-buffer))))
+      (revert-buffer)
+      (jj--goto-current-change))))
 
 (defun jj-squash ()
   (interactive)
@@ -250,7 +266,8 @@
                (s-join " " (--map (format "-d %s" it)
                                   jj--marked-changes)))))
       (setq jj--marked-changes 'nil)
-      (revert-buffer))))
+      (revert-buffer)
+      (jj--goto-current-change))))
 
 (defun jj--rebase-source ()
   (interactive)
@@ -262,7 +279,9 @@
                change-id
                (s-join " " (--map (format "-d %s" it)
                                   jj--marked-changes))))
-      (setq jj--marked-changes 'nil))))
+      (setq jj--marked-changes 'nil)
+      (revert-buffer)
+      (jj--goto-current-change))))
 
 (defun jj-diff ()
   (interactive)
@@ -361,7 +380,8 @@
   ;; TODO, display reuslt of command in a nicer way
   (message "%s"
            (shell-command-to-string (format "jj git push %s" (s-join " " args))))
-  (revert-buffer))
+  (revert-buffer)
+  (jj--goto-current-change))
 
 (transient-define-prefix jj-git-fetch ()
   ["Options"
@@ -379,7 +399,8 @@
   ;; TODO, display reuslt of command in a nicer way
   (message "%s"
            (shell-command-to-string (format "jj git fetch %s" (s-join " " args))))
-  (revert-buffer))
+  (revert-buffer)
+  (jj--goto-current-change))
 
 (transient-define-prefix jj--bookmark-transient ()
   ["jj bookmark"
@@ -394,7 +415,8 @@
   (let ((change-id (jj--change-id-at-point (point))))
     (when change-id
       (shell-command-to-string (format "jj bookmark create -r %s %s" change-id bookmark-name))
-      (revert-buffer))))
+      (revert-buffer)
+      (jj--goto-current-change))))
 
 (defun jj-bookmark-move (&optional args)
   (interactive
@@ -408,7 +430,8 @@
                    change-id
                    (s-join " " args)))
           (setq jj--marked-changes 'nil)
-          (revert-buffer))
+          (revert-buffer)
+          (jj--goto-current-change))
       ;; else
       (when change-id
         (let ((bookmark-name (read-string "Bookmark: ")))
@@ -417,7 +440,8 @@
                    bookmark-name
                    change-id
                    (s-join " " args)))
-          (revert-buffer))))))
+          (revert-buffer)
+          (jj--goto-current-change))))))
 
 (defun jj-bookmark-forget ()
   (interactive)
@@ -459,6 +483,8 @@
 
   "m"  #'jj--mark
   "u"  #'jj--unmark
+
+  "@" #'jj--goto-current-change
 
   ;; git commands
   "P" #'jj-git-push

@@ -405,8 +405,9 @@
 
 (transient-define-prefix jj--bookmark-transient ()
   ["jj bookmark"
-   ["Create"
-    ("c" "Create" jj-bookmark-create)]
+   ["Actions"
+    ("c" "Create" jj-bookmark-create)
+    ("f" "Forget" jj-bookmark-forget)]
    ["Move"
     ("-B" "Allow moving bookmarks backwards or sideways" "--allow-backwards")
     ("m" "Move" jj-bookmark-move)]])
@@ -418,6 +419,12 @@
       (shell-command-to-string (format "jj bookmark create -r %s %s" change-id bookmark-name))
       (revert-buffer)
       (jj--goto-current-change))))
+
+(defun jj-bookmark-forget (bookmark-name)
+  (interactive "MBookmark: ")
+  (shell-command-to-string (format "jj bookmark forget %s" change-id bookmark-name))
+      (revert-buffer)
+      (jj--goto-current-change))
 
 (defun jj-bookmark-move (&optional args)
   (interactive

@@ -44,13 +44,13 @@
 (defun jj--marked-changes-or-read ()
   (if jj--marked-changes
       jj--marked-changes
-    (list (completing-read
-           "Revision: "
-           (->> jj--change-data
-                (--map (car it))
-                (--filter (not (s-blank? it)))
-                (--map (substring it 0 8)))))))
-
+    (let ((completion-styles '(basic)))
+      (list (completing-read
+             "Revision: "
+             (->> jj--change-data
+                  (--map (car it))
+                  (--filter (not (s-blank? it)))
+                  (--map (substring it 0 8))))))))
 
 (defun jj--update-data ()
   "Get list of change ids and commit ids from `jj'"

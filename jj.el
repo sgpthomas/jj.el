@@ -433,9 +433,9 @@
 
 (defun jj-bookmark-forget (bookmark-name)
   (interactive "MBookmark: ")
-  (shell-command-to-string (format "jj bookmark forget %s" change-id bookmark-name))
-      (revert-buffer)
-      (jj--goto-current-change))
+  (shell-command-to-string (format "jj bookmark forget %s" bookmark-name))
+  (revert-buffer)
+  (jj--goto-current-change))
 
 (defun jj-bookmark-move (&optional args)
   (interactive
@@ -461,10 +461,6 @@
                    (s-join " " args)))
           (revert-buffer)
           (jj--goto-current-change))))))
-
-(defun jj-bookmark-forget ()
-  (interactive)
-  (message "TODO: bookmark forget"))
 
 (defun jj-test ()
   (interactive)

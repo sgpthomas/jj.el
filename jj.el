@@ -41,6 +41,17 @@
   '()
   "A list of `marked' changed-ids")
 
+(defun jj--marked-changes-or-read ()
+  (if jj--marked-changes
+      jj--marked-changes
+    (list (completing-read
+           "Revision: "
+           (->> jj--change-data
+                (--map (car it))
+                (--filter (not (s-blank? it)))
+                (--map (substring it 0 8)))))))
+
+
 (defun jj--update-data ()
   "Get list of change ids and commit ids from `jj'"
 
@@ -260,12 +271,12 @@
   (interactive)
 
   (let ((change-id (jj--change-id-at-point (point))))
-    (when (and change-id jj--marked-changes)
+    (when change-id
       (message "%s" (shell-command-to-string
        (format "jj rebase -r %s %s"
                change-id
                (s-join " " (--map (format "-d %s" it)
-                                  jj--marked-changes)))))
+                                  (jj--marked-changes-or-read))))))
       (setq jj--marked-changes 'nil)
       (revert-buffer)
       (jj--goto-current-change))))
@@ -274,12 +285,12 @@
   (interactive)
 
   (let ((change-id (jj--change-id-at-point (point))))
-    (when (and change-id jj--marked-changes)
+    (when change-id
       (shell-command-to-string
        (format "jj rebase -s %s %s"
                change-id
                (s-join " " (--map (format "-d %s" it)
-                                  jj--marked-changes))))
+                                  (jj--marked-changes-or-read)))))
       (setq jj--marked-changes 'nil)
       (revert-buffer)
       (jj--goto-current-change))))

@@ -268,17 +268,57 @@
   (interactive)
   (let ((change-id (jj--change-id-at-point (point))))
     (when change-id
-      (let ((diff-buffer (get-buffer-create (format "jj-diff-%s" change-id))))
-        (switch-to-buffer-other-window diff-buffer)
+      (let ((diff-buffer (get-buffer-create (format "*jj-diff-%s*" change-id))))
+        (switch-to-buffer diff-buffer)
 
-        (font-lock-mode 1)
-        (special-mode)
-        (let ((inhibit-read-only t))
+        (jj-diff-mode)
+        (let* ((inhibit-read-only t)
+               (jj-diff-out (ansi-color-apply
+                             (shell-command-to-string
+                              (format "jj diff -r %s --color=always" change-id))))
+               (proc-diff (jj--process-diff jj-diff-out)))
           (erase-buffer)
-          (insert (ansi-color-apply
-                   (shell-command-to-string (format "jj diff -r %s --color=always" change-id)))))
+          (jj--insert-diff proc-diff))
         
         (goto-char (point-min))))))
+
+(defun jj--process-diff (diff)
+  (let* ((file-rx (rx (: (| "Modified" "Added" "Removed") (1+ any) ":" "\n")))
+         (file-chunks (--map (s-split-up-to "\n" it 1) (s-slice-at file-rx diff)))
+         (chunks-rx (rx (: bol (1+ any) "..." "\n"))))
+    (--map (cons (car it)
+                 (s-split chunks-rx (cadr it) t))
+           file-chunks)))
+
+(defun jj--insert-diff (processed-diff)
+  (magit-insert-section (magit-section)
+    (--map (magit-insert-section (magit-section)
+             (magit-insert-heading (substring-no-properties (car it)))
+             (magit-insert-section-body
+               (if (length> (cdr it) 1)
+                   (--map (magit-insert-section (magit-section)
+                            (magit-insert-heading (jj--chunk-name it))
+                            (magit-insert-section-body (insert it)))
+                          (cdr it))
+                 (insert (cadr it)))))
+           processed-diff)))
+
+(defun jj--chunk-name (chunk)
+  (let* ((linenos (->> (s-lines chunk)
+                       (--map
+                        (if (s-index-of ":" it)
+                            (substring-no-properties it 0 (1+ (s-index-of ":" it)))
+                          ""))
+                       (--map (s-split (rx (1+ whitespace)) it t))
+                       (-flatten)
+                       (--separate (not (s-ends-with? ":" it)))))
+         (prev (-map #'string-to-number (car linenos)))
+         (curr (--map (string-to-number (s-chop-suffix ":" it)) (cadr linenos))))
+    (propertize (format "@@ removed %s-%s, added %s-%s @@"
+                        (-min prev) (-max prev)
+                        (-min curr) (-max curr))
+                'face 'bold-italic)))
+
 
 (defun jj--mark ()
   (interactive)
@@ -489,6 +529,25 @@
   (insert (substitute-command-keys
            "JJ: Press `\\[jj-describe-confirm]' to confirm, `\\[jj-describe-abort]' to abort\n"))
   (goto-line 1))
+
+(defvar-keymap jj-diff-mode-map
+  :parent special-mode-map
+  "C-i" #'magit-section-cycle
+  "<backtab>" #'magit-section-cycle-global
+  "^" #'magit-section-up
+  "p" #'magit-section-backward
+  "n" #'magit-section-forward
+  "M-p" #'magit-section-backward-sibling
+  "M-n" #'magit-section-forward-sibling
+  "1" #'magit-section-show-level-1
+  "2" #'magit-section-show-level-2
+  "3" #'magit-section-show-level-3
+  "M-1" #'magit-section-show-level-1-all
+  "M-2" #'magit-section-show-level-2-all
+  "M-3" #'magit-section-show-level-3-all)
+
+(define-derived-mode jj-diff-mode special-mode "jj diff"
+  "Major mode for viewing jj diffs")
 
 ;;;###autoload
 (defun jj-diff-editor (left right output)

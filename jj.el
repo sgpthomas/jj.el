@@ -10,6 +10,8 @@
 (require 'magit-section)
 (require 's)
 (require 'transient)
+(require 'server)
+(require 'thingatpt)
 
 (defun jj-status ()
   (interactive)
@@ -18,19 +20,23 @@
     (with-current-buffer jj-buffer
       (jj-log-mode)
       (revert-buffer))
-    (switch-to-buffer-other-window jj-buffer)))
+    (switch-to-buffer jj-buffer)))
 
+;;;###autoload
 (defvar jj--data-log
   (format "jj log --no-pager --color=never -T '%s' --no-graph"
           "change_id ++ \", \" ++ commit_id ++ \"\\n\""))
 
+;;;###autoload
 (defvar jj--user-log
   "jj log --no-pager --color=always")
 
+;;;###autoload
 (defvar jj--change-data
   '()
   "Alist mapping change ids to commit ids")
 
+;;;###autoload
 (defvar jj--marked-changes
   '()
   "A list of `marked' changed-ids")
@@ -64,7 +70,7 @@
                (get-text-property (point) 'jj-log)
                (equal (jj--change-id-at-point (point))
                       change-id)))
-    (next-line)))
+    (forward-line)))
 
 (defun jj--goto-current-change ()
   (interactive)
@@ -77,20 +83,19 @@
     (jj--goto-change-id change-id)))
 
 (defun jj--render ()
-  ;; testing
-  ;; (setq-local default-directory "~/Development/yardbird")
   (jj--update-data)
 
   (let ((current-point (point))
         (inhibit-read-only t))
     (erase-buffer)
     (magit-insert-section (magit-section)
-      (magit-insert-heading "Status")
       (magit-insert-section (magit-section)
-        (magit-insert-section-body
-          (insert (ansi-color-apply
-                   (shell-command-to-string "jj st --no-pager --color=always")))
-          (insert "\n")))
+        (magit-insert-heading "Status")
+        (magit-insert-section (magit-section)
+          (magit-insert-section-body
+            (insert (ansi-color-apply
+                     (shell-command-to-string "jj st --no-pager --color=always")))
+            (insert "\n"))))
 
       (magit-insert-section (magit-section)
         (magit-insert-heading "Log")
@@ -122,10 +127,7 @@
       (forward-to-word)
       (setq-local jj--debug-word-at-point (word-at-point))
       (let ((overlay (make-overlay (point) (+ (point) (length change-id)))))
-        (overlay-put overlay 'face 'match)
-        )
-      )
-    ))
+        (overlay-put overlay 'face 'match)))))
 
 (defun jj--debug-mark-all ()
   (interactive)
@@ -133,10 +135,7 @@
     (forward-word)
     (when (-contains? jj--marked-changes (word-at-point))
       (let ((overlay (make-overlay (point) (- (point) (length (word-at-point))))))
-        (overlay-put overlay 'face 'match)
-        )
-      )
-    ))
+        (overlay-put overlay 'face 'match)))))
 
 (defun jj--debug-remove-overlays (loc)
   (interactive "d")
@@ -154,6 +153,8 @@
 
 (defun jj-desc ()
   (interactive)
+  (unless server-mode
+    (error "You need to start the emacs server with `server-start'"))
   (let ((change-id (jj--change-id-at-point (point)))
         (server-window 'pop-to-buffer))
     (when change-id
@@ -228,7 +229,7 @@
    (list (transient-args 'jj-new-with-options)))
   (let ((change-id (jj--change-id-at-point (point))))
     (when change-id
-      (shell-command-to-string (format "jj new -B %s"
+      (shell-command-to-string (format "jj new -B %s %s"
                                        change-id
                                        (s-join " " args)))
       (revert-buffer)
@@ -516,7 +517,7 @@
 
 (defun jj-describe-abort ()
   (interactive)
-  (not-modified)
+  (set-buffer-modified-p nil)
   (kill-buffer)
   (server-edit-abort))
 
@@ -554,7 +555,7 @@
   ;; TODO: figure out how to highlight the keys
   (insert (substitute-command-keys
            "JJ: Press `\\[jj-describe-confirm]' to confirm, `\\[jj-describe-abort]' to abort\n"))
-  (goto-line 1))
+  (forward-line 1))
 
 (defvar-keymap jj-diff-mode-map
   :parent special-mode-map
@@ -583,7 +584,7 @@
 
 (define-minor-mode jj-diff-hl-mode
   "Toggles the highlight jj diffs in buffer."
-  nil
+  :init-value nil
   :global nil
   :group 'jj
 
@@ -634,7 +635,7 @@
                                     t)
              (end-of-line)
              (let ((start (1+ (point))))
-               (next-line)
+               (forward-line 1)
                (re-search-forward (rx (| "+++++++" ">>>>>>>" "%%%%%%%"))  (cdr it))
                (beginning-of-line)
                (let ((end (point)))
@@ -649,7 +650,7 @@
                      (jj--make-overlay (line-beginning-position)
                                        (line-end-position)
                                        'diff-removed))
-                   (next-line))
+                   (forward-line 1))
                  (jj--make-overlay start end 'diff-context)))))
          jj--conflicts))
 

@@ -423,6 +423,15 @@
     ("-B" "Allow moving bookmarks backwards or sideways" "--allow-backwards")
     ("m" "Move" jj-bookmark-move)]])
 
+(defun jj--bookmark-read ()
+  ;; really? I can't use the prompt bookmark?
+  (completing-read "Branch: "
+                   (s-split "\n"
+                            (shell-command-to-string
+                             (format "jj bookmark list -T '%s'"
+                                     "name ++ \"\\n\""))
+                            t)))
+
 (defun jj-bookmark-create (bookmark-name)
   (interactive "MBookmark: ")
   (let ((change-id (jj--change-id-at-point (point))))
@@ -432,7 +441,7 @@
       (jj--goto-current-change))))
 
 (defun jj-bookmark-forget (bookmark-name)
-  (interactive "MBookmark: ")
+  (interactive (list (jj--bookmark-read)))
   (shell-command-to-string (format "jj bookmark forget %s" bookmark-name))
   (revert-buffer)
   (jj--goto-current-change))
@@ -453,7 +462,7 @@
           (jj--goto-current-change))
       ;; else
       (when change-id
-        (let ((bookmark-name (read-string "Bookmark: ")))
+        (let ((bookmark-name (jj--bookmark-read)))
           (shell-command-to-string
            (format "jj bookmark move --from %s --to %s %s"
                    bookmark-name

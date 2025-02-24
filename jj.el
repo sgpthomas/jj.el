@@ -3,7 +3,7 @@
 ;; Copyright (C) 2023 Samuel Thomas
 
 ;; Author: Samuel Thomas <sgt@cs.utexas.edu>
-;; Package-Requires: (dash magit-section s transient)
+;; Package-Requires: (dash magit-section s transient f)
 
 ;;; External packages:
 (require 'dash)
@@ -12,12 +12,14 @@
 (require 'transient)
 (require 'server)
 (require 'thingatpt)
+(require 'f)
 
 (defun jj-status ()
   (interactive)
   (let ((jj-buffer (get-buffer-create "*jj*"))
         (inhibit-read-only t))
     (with-current-buffer jj-buffer
+      (setq-local jj--marked-changes '())
       (jj-log-mode)
       (revert-buffer))
     (switch-to-buffer jj-buffer)))
@@ -26,6 +28,12 @@
 (defvar jj--data-log
   (format "jj log --no-pager --color=never -T '%s' --no-graph"
           "change_id ++ \", \" ++ commit_id ++ \"\\n\""))
+
+;;;###autoload
+;; TODO: use this properly
+(defvar jj--config-overrides
+  '(;; ("ui.diff-editor" "emacsclient" "-e" "(jj-diff-editor '$left' '$right' '$output')")
+    ("ui.editor" "emacsclient")))
 
 ;;;###autoload
 (defvar jj--user-log
@@ -37,12 +45,27 @@
   "Alist mapping change ids to commit ids")
 
 ;;;###autoload
-(defvar jj--marked-changes
+(defvar-local jj--marked-changes
   '()
   "A list of `marked' changed-ids")
 
-(defun jj--marked-changes-or-read ()
-  (if jj--marked-changes
+(defun implies (a b)
+  (or (not a) b))
+
+(defun jj--config-str ()
+  (-flatten
+   (--map (list "--config-toml"
+                (format "'ui.editor = blah'"
+                        (car it)
+                        (s-join " " (-map #'jj--quote-bash-string (cdr it)))))
+          jj--config-overrides)))
+
+(defun jj--quote-bash-string (str)
+  (s-replace-all `(("'" . "\\\\\\\"")) str))
+
+(defun jj--marked-changes-or-read (&optional require-one-mark)
+  (if (and jj--marked-changes
+           (implies require-one-mark (length= jj--marked-changes 1)))
       jj--marked-changes
     (let ((completion-styles '(basic)))
       (list (completing-read
@@ -240,7 +263,7 @@
    (list (transient-args 'jj-new-with-options)))
   (let ((change-id (jj--change-id-at-point (point))))
     (when change-id
-      (shell-command-to-string (format "jj new -B %s %s"
+      (shell-command-to-string (format "jj new -B %s %s --no-edit"
                                        change-id
                                        (s-join " " args)))
       (revert-buffer)
@@ -258,9 +281,62 @@
       (revert-buffer)
       (jj--goto-current-change))))
 
-(defun jj-squash ()
+(transient-define-prefix jj-squash ()
+  ["Options"
+   ("-k" "The source revision will not be abandoned" "--keep-emptied")]
+  ["Squash"
+   ("s" "Squash" jj--do-squash)
+   ("i" "Interactive Squash" jj--do-interactive-squash)])
+
+(defun jj--do-squash (marked-change args)
+  (interactive
+   (list (car (jj--marked-changes-or-read t))
+         (transient-args 'jj-squash)))
+  (let ((change-id (jj--change-id-at-point (point))))
+    (when change-id
+      (progn
+        (shell-command-to-string
+         (format "jj squash --from %s --to %s %s"
+                 change-id
+                 marked-change
+                 (s-join " " args)))
+        (revert-buffer)
+        (jj--goto-current-change)))))
+
+(defun jj--do-interactive-squash (marked-change args)
+  (interactive
+   (list (car (jj--marked-changes-or-read t))
+         (transient-args 'jj-squash)))
+  (let ((change-id (jj--change-id-at-point (point))))
+    (when change-id
+      ;; open diff buffer comparing from with to
+      ;; collect user marks
+      ;; when they submit, then do the squash
+      (jj--squash-diff change-id marked-change))))
+
+
+(defun jj--squash-diff (from to)
   (interactive)
-  (message "TODO: squash"))
+  (let ((diff-buffer (get-buffer-create (format "*jj-squash-diff-%s-%s*" from to))))
+        (switch-to-buffer diff-buffer)
+
+        (jj-diff-mode)
+        (setq-local jj--from from
+                    jj--to to)
+        (setq jj--selected-hunks '())
+        (setq-local jj--squash-mode t)
+        (let* ((inhibit-read-only t)
+               (jj-diff-out (ansi-color-apply
+                             (shell-command-to-string
+                              ;; show diff backwards so that it's the way I find
+                              ;; more intuitive
+                              (format "jj diff --to %s --from %s --color=always"
+                                      from to))))
+               (proc-diff (jj--process-diff jj-diff-out)))
+          (erase-buffer)
+          (jj--insert-diff proc-diff))
+        
+        (goto-char (point-min))))
 
 (transient-define-prefix jj-rebase ()
   ["--from"
@@ -314,25 +390,36 @@
         (goto-char (point-min))))))
 
 (defun jj--process-diff (diff)
-  (let* ((file-rx (rx (: (| "Modified" "Added" "Removed") (1+ any) ":" "\n")))
-         (file-chunks (--map (s-split-up-to "\n" it 1) (s-slice-at file-rx diff)))
-         (chunks-rx (rx (: bol (1+ any) "..." "\n"))))
-    (--map (cons (car it)
-                 (s-split chunks-rx (cadr it) t))
-           file-chunks)))
+  (unless (s-blank? diff)
+    (let* ((file-rx (rx (: (| "Modified" "Added" "Removed") (1+ any) ":" "\n")))
+           (file-chunks (--map (s-split-up-to "\n" it 1) (s-slice-at file-rx diff)))
+           (chunks-rx (rx (: bol (1+ any) "..." "\n"))))
+      (--map (cons (car it)
+                   (s-split chunks-rx (cadr it) t))
+             file-chunks))))
 
 (defun jj--insert-diff (processed-diff)
-  (magit-insert-section (magit-section)
-    (--map (magit-insert-section (magit-section)
-             (magit-insert-heading (substring-no-properties (car it)))
-             (magit-insert-section-body
-               (if (length> (cdr it) 1)
-                   (--map (magit-insert-section (magit-section)
-                            (magit-insert-heading (jj--chunk-name it))
-                            (magit-insert-section-body (insert it)))
-                          (cdr it))
-                 (insert (cadr it)))))
-           processed-diff)))
+  (if (not processed-diff)
+      (insert (propertize "(empty)"
+                          'face 'font-lock-doc-face))
+    (magit-insert-section (magit-section)
+      (--map (let ((filename (jj--diff-filename (car it))))
+               (magit-insert-section (magit-section filename)
+                 (magit-insert-heading (substring-no-properties (car it)))
+                 (magit-insert-section-body
+                   (if (length> (cdr it) 1)
+                       (--map (let ((hunk-id (jj--chunk-name it)))
+                                (magit-insert-section
+                                    (magit-section `(,filename . ,(substring-no-properties hunk-id)))
+                                  (magit-insert-heading hunk-id)
+                                  (magit-insert-section-body (insert it))))
+                              (cdr it))
+                     (insert (cadr it))))))
+             processed-diff))))
+
+(defun jj--diff-filename (hunks-title)
+  (substring-no-properties
+   (s-chop-suffix ":" (-last-item (s-split " " hunks-title)))))
 
 (defun jj--chunk-name (chunk)
   (let* ((linenos (->> (s-lines chunk)
@@ -344,10 +431,13 @@
                        (-flatten)
                        (--separate (not (s-ends-with? ":" it)))))
          (prev (-map #'string-to-number (car linenos)))
-         (curr (--map (string-to-number (s-chop-suffix ":" it)) (cadr linenos))))
-    (propertize (format "@@ removed %s-%s, added %s-%s @@"
-                        (-min prev) (-max prev)
-                        (-min curr) (-max curr))
+         (curr (->> (cadr linenos)
+                    (--map (s-chop-suffix ":" it))
+                    (--filter (not (s-blank? it)))
+                    (-map #'string-to-number))))
+    (propertize (format "@@ -%s,%s +%s,%s @@"
+                        (-min prev) (1+ (- (-max prev) (-min prev)))
+                        (-min curr) (1+ (- (-max curr) (-min curr))))
                 'face 'bold-italic)))
 
 
@@ -471,10 +561,6 @@
           (revert-buffer)
           (jj--goto-current-change))))))
 
-(defun jj-test ()
-  (interactive)
-  (message "%s" (jj--change-id-at-point (point))))
-
 (transient-define-prefix jj-help ()
   [["Editing Commands"
     ("e" "Edit" jj-edit)
@@ -491,7 +577,6 @@
 
 (defvar-keymap jj-log-mode-map
   :parent special-mode-map
-  "," #'jj-test
   "C-i" #'magit-section-toggle
 
   "?" #'jj-help
@@ -594,16 +679,135 @@
   "3" #'magit-section-show-level-3
   "M-1" #'magit-section-show-level-1-all
   "M-2" #'magit-section-show-level-2-all
-  "M-3" #'magit-section-show-level-3-all)
+  "M-3" #'magit-section-show-level-3-all
+
+  "m" #'jj--mark-current-hunk
+  "u" #'jj--unmark-current-hunk
+  "C-c C-c" #'jj--apply-squash
+  "C-c C-k" #'jj--abort-squash)
+
+(defvar jj--selected-hunks '())
 
 (define-derived-mode jj-diff-mode special-mode "jj diff"
-  "Major mode for viewing jj diffs")
+  "Major mode for viewing jj diffs"
+
+  (setq-local jj--squash-mode nil)
+  (when (fboundp 'evil-make-overriding-map)
+    (evil-make-overriding-map jj-diff-mode-map 'normal)))
+
+(defun jj--mark-current-hunk (section)
+  (interactive
+   (list (magit-current-section)))
+  (when jj--squash-mode
+    (let* ((value (oref section value))
+           (filename (car value))
+           (hunk-id (cdr value))
+           (overlay (make-overlay (oref section start) (oref section end))))
+      (overlay-put overlay 'face 'diff-index)
+      (overlay-put overlay 'jj-hunk t)
+      (let ((sublist (assoc-string filename jj--selected-hunks)))
+        (if sublist
+            (unless (-contains? (cdr sublist) hunk-id)
+              (push hunk-id (cdr sublist) ))
+          
+          (push `(,filename . ,(list hunk-id)) jj--selected-hunks))))))
+
+(defun jj--unmark-current-hunk (section)
+  (interactive
+   (list (magit-current-section)))
+  (when jj--squash-mode
+    (let* ((value (oref section value))
+           (filename (car value))
+           (hunk-id (cdr value)))
+      ;; remove overlay
+      (--map (delete-overlay it)
+             (--filter (overlay-get it 'jj-hunk)
+                       (overlays-at (point))))
+      (let ((sublist (assoc-string filename jj--selected-hunks)))
+        (when sublist
+          (setf (cdr sublist) (delete hunk-id (cdr sublist))))))))
+
+(defun jj--apply-squash ()
+  (interactive)
+  (when jj--squash-mode
+    (make-process
+     :name "jj-squash"
+     :buffer "*jj-squash-debug*"
+     :command `("sh" "-c"
+                ;; TODO: clean this up
+                ,(format "jj squash --from %s --to %s -i --debug %s"
+                         jj--from
+                         jj--to
+                         (s-join ""
+                                 '("--config-toml="
+                                   "\""
+                                   "ui.diff-editor="
+                                   "["
+                                   "'emacsclient'"
+                                   ","
+                                   "'-e'"
+                                   ","
+                                   "'(jj-diff-editor \\\"\\$left\\\" \\\"\\$right\\\" \\\"\\$output\\\")'"
+                                   "]"
+                                   "\"")
+                                 )))
+     :sentinel (lambda (_process event)
+                 (if (s-equals? event "finished\n")
+                     (progn
+                       (quit-window t)
+                       (revert-buffer)
+                       (jj--goto-current-change))
+                   (message "%s" (s-trim event)))))))
+
+
 
 ;;;###autoload
 (defun jj-diff-editor (left right output)
-  (message "%s %s %s" left right output)
-  (ediff-directories3 left right output nil)
-  (error "nyi"))
+  (let* ((default-directory (f-parent left))
+         (patch (shell-command-to-string
+                 (format "diff -ruN left right -x JJ-INSTRUCTIONS")))
+         (filtered-patch
+          (->> patch
+               (substring-no-properties)
+               (s-slice-at (rx (: line-start "diff -ruN" (0+ any) line-end)))
+               (--map (s-split-up-to "\n" it 3))
+               (--map (list (nth 1 (s-match (rx (: "right/" (group (1+ not-newline)) eol))
+                                            (nth 0 it)))
+                            (nth 0 it)
+                            (nth 1 it)
+                            (nth 2 it)
+                            (s-slice-at (rx (: "@@" space
+                                               "-" (1+ digit) "," (1+ digit) space
+                                               "+" (1+ digit) "," (1+ digit) space
+                                               "@@"))
+                                        (nth 3 it))))
+               (--map (jj--filter-hunks it jj--selected-hunks))
+               (--filter (not (null (nth 4 it))))
+               (--map (s-join "\n" (list (nth 1 it)
+                                         (nth 2 it)
+                                         (nth 3 it)
+                                         (s-join "" (nth 4 it))))))))
+    (let ((tmp-patch-buffer (generate-new-buffer "*jj-patch*")))
+      ;; not totally sure why this is necessary, seems wrong
+      (shell-command-to-string "rm -rf output")
+      (shell-command-to-string "cp -r left output")
+      (with-current-buffer tmp-patch-buffer
+        (let ((default-directory output))
+          (erase-buffer)
+          (insert (s-join "" filtered-patch))
+          (call-process-region (point-min) (point-max) "patch" nil "*jj-diff*" nil
+                               "-p1")
+          (kill-buffer))))))
+
+(defun jj--filter-hunks (file-patch hunks)
+  (let* ((filename (car file-patch))
+         (hunks-for-file (cdr (--first (s-equals? filename (car it)) hunks))))
+    (list (nth 0 file-patch)
+          (nth 1 file-patch)
+          (nth 2 file-patch)
+          (nth 3 file-patch)
+          (--filter (-contains? hunks-for-file (car (s-split-up-to "\n" it 1)))
+                    (nth 4 file-patch)))))
 
 (define-minor-mode jj-diff-hl-mode
   "Toggles the highlight jj diffs in buffer."
